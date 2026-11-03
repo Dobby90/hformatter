@@ -1,0 +1,20 @@
+export type Indent = '2' | '4' | 'tab';
+export type Options = { indent: Indent; dialect?: import('./sql/config.ts').SqlDialect; keywordCase?: import('./sql/config.ts').KeywordCase }; 
+export type Action = 'format' | 'minify' | 'validate';
+export type Diagnostic = { message: string; offset?: number; line?: number; column?: number };
+export type Result = { ok: true; text: string } | { ok: false; error: Diagnostic; kind?: 'unsupported' };
+export type Formatter = {
+  id: string;
+  name: string;
+  extensions: readonly string[];
+  language: string;
+  available: true;
+  capabilities: { format: boolean; minify: boolean; validate: boolean };
+  options: { indent: { label: string; default: Indent; values: readonly Indent[] } };
+  format: (text: string, options: Options) => Result | Promise<Result>;
+  minify?: (text: string, options: Options) => Result | Promise<Result>;
+  validate?: (text: string, options: Options) => Result | Promise<Result>;
+};
+export type PlannedFormatter = { id: string; name: string; available: false };
+export type Request = { id: number; version: number; formatter: string; action: Action; text: string; options: Options };
+export type Response = { id: number; version: number; result: Result };

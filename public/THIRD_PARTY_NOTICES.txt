@@ -1,0 +1,47 @@
+ClickHouse syntax validation includes the following open source software:
+
+@clickhouse/parser 0.3.0
+Copyright 2016-2026 ClickHouse, Inc.
+License: Apache-2.0 (see licenses/clickhouse-parser-LICENSE.txt)
+Source: https://github.com/ClickHouse/clickhouse-js-parser
+
+zod (dependency of @clickhouse/parser; exact version in package-lock.json)
+License: MIT (see licenses/zod-LICENSE.txt for copyright and full terms)
+Source: https://github.com/colinhacks/zod
+
+These packages are bundled without modifications to their source.
+
+Oracle syntax validation includes:
+
+Oracle PL/SQL grammar from antlr/grammars-v4
+Commit: 89fd36482e8cb68a4e55df021a8adbc7541b52f2
+Copyright (c) 2009-2011 Alexandre Porcelli
+Copyright (c) 2015-2019 Ivan Kochurkin (Positive Technologies)
+Copyright (c) 2017-2018 Mark Adams
+License: Apache-2.0 (see licenses/oracle-grammar-LICENSE.txt)
+Source: https://github.com/antlr/grammars-v4/tree/89fd36482e8cb68a4e55df021a8adbc7541b52f2/sql/plsql
+JavaScript generated with ANTLR 4.13.2. Base classes are adapted by removing
+unused imports of generated classes to eliminate circular dependencies.
+Original source and regeneration instructions are included in vendor/oracle-grammar.
+
+antlr4 4.13.2 JavaScript runtime
+Copyright (c) 2012-2022 The ANTLR Project. All rights reserved.
+License: BSD-3-Clause (see licenses/antlr4-LICENSE.txt)
+Source: https://github.com/antlr/antlr4/tree/4.13.2
+
+Markdown viewing and editing includes:
+
+react-markdown 10.1.0
+Source: https://github.com/remarkjs/react-markdown
+
+remark-gfm 4.0.1
+Source: https://github.com/remarkjs/remark-gfm
+
+@codemirror/lang-markdown 6.5.2
+Source: https://codemirror.net/
+
+Complete copyright and license texts for these packages and their dependencies
+are included in licenses/markdown-dependencies.txt. Exact dependency versions
+are recorded in package-lock.json. These packages are bundled without source
+modifications; some type/build-only dependency notices are included conservatively.
+Regenerate the collected notices with node scripts/generate-markdown-notices.mjs.
