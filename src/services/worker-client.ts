@@ -18,12 +18,16 @@ export class WorkerClient {
     this.cancel();
     return new Promise((resolve, reject) => {
       try {
-        this.worker = this.factory();
-        this.pending = { id: request.id, version: request.version, resolve, reject };
-        const fail = (message: string) => { const pending = this.pending; this.pending = null; this.cancel(); pending?.reject(new Error(message)); };
+        const worker = this.factory();
+        this.worker = worker;
+        const pendingRequest = { id: request.id, version: request.version, resolve, reject };
+        this.pending = pendingRequest;
+        const isCurrent = () => this.worker === worker && this.pending === pendingRequest;
+        const fail = (message: string) => { if (!isCurrent()) return; const pending = this.pending; this.pending = null; this.cancel(); pending?.reject(new Error(message)); };
         this.worker.onerror = () => fail('처리 중 실행 오류가 발생했습니다. 입력 크기나 중첩 깊이를 줄이고 다시 시도하세요.');
         this.worker.onmessageerror = () => fail('처리 결과를 읽을 수 없습니다. 다시 시도하세요.');
         this.worker.onmessage = (event: MessageEvent<Response>) => {
+          if (!isCurrent()) return;
           if (event.data.id !== this.pending?.id || event.data.version !== this.pending.version) return;
           const pending = this.pending; this.pending = null; this.cancel(); pending.resolve(event.data);
         };
