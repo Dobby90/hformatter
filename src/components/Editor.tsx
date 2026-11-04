@@ -9,6 +9,7 @@ import { json } from '@codemirror/lang-json';
 import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 import { assertInputSize } from '../services/files.ts';
+import { xmlLanguage } from '../formatters/xml/language.ts';
 
 export type EditorHandle = { replace: (text: string, reset?: boolean) => void; goTo: (offset: number) => void; search: () => void; undo: () => void; redo: () => void; selectAll: () => void };
 type Props = { label: string; readOnly?: boolean; language: string; languageSupport?: Extension; onChange?: (value: string) => void; onLimit?: (message: string) => void; onRun?: () => void };
@@ -19,7 +20,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(props, ref
   const editorExtensions = useRef<Extension[]>([]);
   const language = useRef(new Compartment());
   const attributes = useRef(new Compartment());
-  const languages: Record<string, () => Extension> = { json, postgresql: () => sql({ dialect: PostgreSQL }), mysql: () => sql({ dialect: MySQL }), mariadb: () => sql({ dialect: MariaSQL }), plsql: () => sql({ dialect: PLSQL }), clickhouse: () => sql({ dialect: StandardSQL }) };
+  const languages: Record<string, () => Extension> = { json, xml: () => xmlLanguage, postgresql: () => sql({ dialect: PostgreSQL }), mysql: () => sql({ dialect: MySQL }), mariadb: () => sql({ dialect: MariaSQL }), plsql: () => sql({ dialect: PLSQL }), clickhouse: () => sql({ dialect: StandardSQL }) };
   const languageExtension = (id: string): Extension => latest.current.languageSupport ?? languages[id]?.() ?? [];
   const themeExtension = EditorView.theme({
     '&': { height: '100%', backgroundColor: 'var(--editor)', color: 'var(--text)' },
@@ -40,7 +41,8 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(props, ref
     const extensions: Extension[] = [
       lineNumbers(), foldGutter(), drawSelection(), rectangularSelection(), bracketMatching(),
       syntaxHighlighting(HighlightStyle.define([
-        { tag: tags.propertyName, color: '#334155' },
+        { tag: [tags.propertyName, tags.typeName], color: '#334155' },
+        { tag: tags.comment, color: '#64748b' },
         { tag: [tags.string, tags.escape], color: '#0f766e' },
         { tag: tags.number, color: '#1d4ed8' },
         { tag: [tags.bool, tags.null, tags.atom, tags.keyword], color: '#6d4c91' },

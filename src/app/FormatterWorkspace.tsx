@@ -8,6 +8,7 @@ import type { SqlDialect, KeywordCase } from '../formatters/sql/config.ts';
 import type { Action, Diagnostic, Indent } from '../formatters/types.ts';
 import { assertInputSize, byteLength, download, readFile } from '../services/files.ts';
 import { WorkerClient } from '../services/worker-client.ts';
+import { readXmlFile } from '../formatters/xml/files.ts';
 
 type Status = { kind: 'empty' | 'changed' | 'busy' | 'success' | 'syntax' | 'error' | 'unsupported'; message: string; error?: Diagnostic };
 const SAMPLE = '{"project":"Dev Toolkit","description":"브라우저 안에서 처리합니다.","enabled":true,"formats":["JSON"],"count":9007199254740993,"options":{"indent":2,"storage":null}}';
@@ -26,18 +27,19 @@ export function FormatterWorkspace({ formatId }: { formatId: string }) {
   const [filename, setFilename] = useState('');
   const [status, setStatus] = useState<Status>(emptyStatus);
   const [notice, setNotice] = useState('');
-  const [output, setOutput] = useState<{ text: string; version: number; indent: Indent } | null>(null);
+  const [output, setOutput] = useState<{ text: string; version: number; generation: number } | null>(null);
   const [reading, setReading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [split, setSplit] = useState(50);
   const source = useRef<EditorHandle>(null), result = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null), workspace = useRef<HTMLDivElement>(null);
   const currentText = useRef(''), version = useRef(0), requestId = useRef(0), fileRequest = useRef(0);
+  const optionGeneration = useRef(0);
   const worker = useRef<WorkerClient | null>(null);
   if (!worker.current) worker.current = new WorkerClient(() => new Worker(new URL('../workers/formatter.worker.ts', import.meta.url), { type: 'module' }));
   useEffect(() => () => { worker.current?.cancel(); fileRequest.current++; }, []);
-  const validOutput = !!output && output.version === version.current && output.indent === indent && status.kind !== 'busy' && status.kind !== 'syntax' && status.kind !== 'error' && status.kind !== 'unsupported';
-  const stale = !!output && (output.version !== version.current || output.indent !== indent);
+  const validOutput = !!output && output.version === version.current && output.generation === optionGeneration.current && status.kind !== 'busy' && status.kind !== 'syntax' && status.kind !== 'error' && status.kind !== 'unsupported';
+  const stale = !!output && (output.version !== version.current || output.generation !== optionGeneration.current);
 
   function changeInput(text: string) {
     currentText.current = text; version.current++; fileRequest.current++; requestId.current++;
@@ -45,7 +47,7 @@ export function FormatterWorkspace({ formatId }: { formatId: string }) {
     setStatus(text.replace(/^\uFEFF/, '').replace(/[ \t\r\n]/g, '') ? { kind: 'changed', message: '입력이 변경되었습니다. 작업을 실행하세요.' } : emptyStatus);
   }
   function changeIndent(value: Indent) {
-    setIndent(value); requestId.current++; worker.current?.cancel();
+    setIndent(value); optionGeneration.current++; requestId.current++; worker.current?.cancel();
     setStatus(currentText.current.trim() ? { kind: 'changed', message: '들여쓰기가 변경되었습니다. 다시 포매팅하세요.' } : emptyStatus);
   }
   function changeSqlOption(nextDialect: SqlDialect, nextCase: KeywordCase) {
@@ -59,30 +61,32 @@ export function FormatterWorkspace({ formatId }: { formatId: string }) {
     const text = currentText.current;
     if (!text.replace(/^\uFEFF/, '').replace(/[ \t\r\n]/g, '')) { setStatus(emptyStatus); return; }
     try { assertInputSize(text); } catch (error) { setStatus({ kind: 'error', message: (error as Error).message }); return; }
-    const id = ++requestId.current, inputVersion = version.current;
+    const id = ++requestId.current, inputVersion = version.current, generation = optionGeneration.current;
     setStatus({ kind: 'busy', message: `${LABELS[action]} 중…` }); setNotice('');
     try {
       const response = await worker.current!.run({ id, version: inputVersion, formatter: formatId, action, text, options: { indent, dialect, keywordCase } });
-      if (requestId.current !== id || version.current !== inputVersion) return;
-      if (!response.result.ok) { setStatus({ kind: response.result.kind === 'unsupported' ? 'unsupported' : 'syntax', message: response.result.error.message, error: response.result.error }); return; }
+      if (requestId.current !== id || version.current !== inputVersion || generation !== optionGeneration.current) return;
+      if (!response.result.ok) { setStatus({ kind: response.result.kind === 'unsupported' ? 'unsupported' : response.result.kind === 'error' ? 'error' : 'syntax', message: response.result.error.message, error: response.result.error }); return; }
       if (action !== 'validate') {
-        setOutput({ text: response.result.text, version: inputVersion, indent });
+        setOutput({ text: response.result.text, version: inputVersion, generation });
         result.current?.replace(response.result.text);
       }
       setStatus({ kind: 'success', message: sqlMode
         ? action === 'validate' ? `문법 검사 완료 · ${selectedDialect.name} 파서 기준 구문 분석 통과` : `포매팅 완료 · ${selectedDialect.name}`
-        : action === 'validate' ? '문법 검사 완료 · 올바른 JSON입니다.' : `${LABELS[action]} 완료 · 올바른 JSON입니다.` });
+        : `${LABELS[action]} 완료 · 올바른 ${formatter.name}입니다.` });
     } catch (error) {
       if (requestId.current === id && version.current === inputVersion) setStatus({ kind: 'error', message: (error as Error).message });
     }
   }
   async function openFiles(files: File[]) {
     const token = ++fileRequest.current, inputVersion = version.current;
+    requestId.current++; worker.current?.cancel();
+    if (status.kind === 'busy') setStatus({ kind: 'changed', message: '작업이 취소되었습니다. 파일을 읽은 후 다시 실행하세요.' });
     setReading(false); setNotice('');
     if (files.length !== 1) { setNotice('파일은 한 번에 하나씩 넣어 주세요. 기존 입력을 유지합니다.'); return; }
     setReading(true);
     try {
-      const text = await readFile(files[0], formatter.extensions);
+      const text = await (formatId === 'xml' ? readXmlFile(files[0]) : readFile(files[0], formatter.extensions));
       if (token !== fileRequest.current || inputVersion !== version.current) return;
       // Editor dispatch calls changeInput synchronously and keeps the undo history.
       source.current?.replace(text); setFilename(files[0].name); setReading(false);
@@ -114,7 +118,7 @@ export function FormatterWorkspace({ formatId }: { formatId: string }) {
         <div className="tool-row"><div className="button-group">
           <button onClick={() => fileInput.current?.click()}>↥ <span>파일 열기</span></button>
           <input ref={fileInput} type="file" className="sr-only" tabIndex={-1} aria-label={`${formatter.name} 파일 선택`} accept={formatter.extensions.map(ext => '.' + ext).join(',')} onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; if (files.length) void openFiles(files); }} />
-          <button onClick={() => { source.current?.replace(sqlMode ? SQL_SAMPLES[dialect] : SAMPLE); setFilename(''); }}>예제</button>
+          <button onClick={() => { const sample = sqlMode ? SQL_SAMPLES[dialect] : formatter.sample ?? SAMPLE; changeInput(sample); source.current?.replace(sample); setFilename(''); }}>예제</button>
           <span className="button-divider" /><button onClick={reset}>초기화</button>
         </div><div className="format-options">{sqlMode && <>
           <label className="indent-select">DB 종류<select aria-label="DB 종류" value={dialect} onChange={event => changeSqlOption(event.target.value as SqlDialect, keywordCase)}>{SQL_DIALECTS.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
@@ -135,7 +139,7 @@ export function FormatterWorkspace({ formatId }: { formatId: string }) {
         </section>
         <div role="separator" aria-label="편집기 너비 조절" aria-orientation="vertical" aria-valuemin={25} aria-valuemax={75} aria-valuenow={split} tabIndex={0} className="resizer" onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setSplit(value => Math.min(75, Math.max(25, value + (event.key === 'ArrowRight' ? 2 : -2)))); } }} onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) { const bounds = workspace.current!.getBoundingClientRect(); setSplit(Math.max(25, Math.min(75, (event.clientX - bounds.left) / bounds.width * 100))); } }} onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)}><span /></div>
         <section className="pane output-pane" aria-label="결과 영역"><div className="pane-heading"><div><span className="pane-dot result-dot" /><h2>결과</h2><span className={`result-label ${stale ? 'stale' : ''}`}>{stale ? '이전 결과 · 재실행 필요' : '읽기 전용'}</span></div><div className="pane-tools"><button aria-label="결과 검색" onClick={() => result.current?.search()}>⌕</button><button disabled={!validOutput} onClick={() => void copy()}>복사</button><button disabled={!validOutput} onClick={() => { if (output) { download(output.text, filename, formatter.extensions[0]); setNotice('다운로드를 시작했습니다.'); } }}>다운로드</button></div></div>
-          <div className="editor-body"><Editor ref={result} label={`${formatter.name} 결과`} readOnly language={editorLanguage} />{!output && <div className="editor-placeholder"><span>↳</span><p>결과가 여기에 표시됩니다</p><small>{sqlMode ? '포매팅을 실행하세요' : '포매팅 또는 압축을 실행하세요'}</small></div>}</div><div className="pane-footer"><span>{stale ? '오래된 결과' : formatter.name}</span><span>{output ? byteLength(output.text).toLocaleString() : 0} bytes</span></div>
+          <div className="editor-body"><Editor ref={result} label={`${formatter.name} 결과`} readOnly language={editorLanguage} />{!output && <div className="editor-placeholder"><span>↳</span><p>결과가 여기에 표시됩니다</p><small>{formatter.capabilities.minify ? '포매팅 또는 압축을 실행하세요' : '포매팅을 실행하세요'}</small></div>}</div><div className="pane-footer"><span>{stale ? '오래된 결과' : formatter.name}</span><span>{output ? byteLength(output.text).toLocaleString() : 0} bytes</span></div>
         </section>
       </div>
 

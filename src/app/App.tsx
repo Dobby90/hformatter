@@ -5,8 +5,9 @@ import { FormatterWorkspace } from './FormatterWorkspace.tsx';
 const MarkdownWorkspace = lazy(() => import('./MarkdownWorkspace.tsx'));
 const APP_VERSION = `V${import.meta.env.VITE_APP_VERSION}`;
 const tools = [
-  ...formatters.filter(item => item.available),
+  ...formatters.filter(item => item.available && item.id !== 'xml'),
   { id: 'markdown', name: 'Markdown', available: true },
+  ...formatters.filter(item => item.id === 'xml'),
   ...formatters.filter(item => !item.available),
 ];
 
