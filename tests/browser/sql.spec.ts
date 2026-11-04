@@ -5,6 +5,26 @@ const output = (page: Page) => page.getByRole('textbox', { name: 'SQL 결과', e
 const format = (page: Page) => page.getByRole('button', { name: /^포매팅/ });
 const validate = (page: Page) => page.getByRole('button', { name: /문법 검사 Validate/ });
 const download = (page: Page) => page.getByRole('button', { name: '다운로드', exact: true });
+async function pasteSql(page: Page, text: string) {
+  await input(page).fill('');
+  await input(page).focus();
+  // Chromium's insertText path used by fill() turns CRLF into two line breaks
+  // in contenteditable. Exercise CodeMirror's real clipboard normalization.
+  await input(page).evaluate((element, text) => {
+    const clipboardData = new DataTransfer(); clipboardData.setData('text/plain', text);
+    element.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+  }, text);
+}
+async function expectSqlLines(page: Page, text: string) {
+  // innerText adds layout-dependent breaks for empty contenteditable lines.
+  await expect.poll(() => input(page).locator('.cm-line').evaluateAll(lines => lines.map(line => line.textContent))).toEqual(text.split('\n'));
+}
+async function expectErrorCursor(page: Page, line: number, column: number, character: string) {
+  await page.getByRole('button', { name: `${line}행 ${column}열로 이동 ↗`, exact: true }).click();
+  await expect(input(page)).toBeFocused();
+  await input(page).press('Shift+ArrowRight');
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(character);
+}
 test.beforeEach(async ({ page }) => { await page.goto('./'); await page.getByRole('button', { name: 'SQL', exact: true }).click(); await expect(input(page)).toBeVisible(); });
 
 test('defaults to PostgreSQL; validation has diagnostics and never refreshes stale output', async ({ page }) => {
@@ -165,12 +185,37 @@ test('Oracle validates in a Worker under deployment CSP and moves to Unicode err
   await expect(page.getByText('문법 검사 완료 · Oracle 파서 기준 구문 분석 통과', { exact: true })).toBeVisible();
   await testInfo.attach('oracle-cold-validation-ms', { body: String((performance.now() - started).toFixed(1)), contentType: 'text/plain' });
   expect(await input(page).innerText()).toBe(original); await expect(output(page)).toBeEmpty(); await expect(download(page)).toBeDisabled();
-  await input(page).fill('\uFEFF-- 한글😀\r\nselect § from dual;'); await validate(page).click();
+  await pasteSql(page, '\uFEFF-- 한글😀\r\nselect § from dual;');
+  await expectSqlLines(page, '\uFEFF-- 한글😀\nselect § from dual;');
+  await validate(page).click();
   await expect(page.getByText(/구문 분석 실패/)).toBeVisible();
-  await page.getByRole('button', { name: '2행 8열로 이동 ↗' }).click(); await expect(input(page)).toBeFocused();
+  await expectErrorCursor(page, 2, 8, '§');
   expect(requests.every(url => new URL(url).origin === 'http://127.0.0.1:4173' && new URL(url).pathname.includes('/assets/'))).toBe(true);
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0]);
 });
+
+for (const [newlineName, newline] of [['LF', '\n'], ['CRLF', '\r\n']] as const) {
+  for (const bom of ['', '\uFEFF']) {
+    for (const method of ['paste', 'file'] as const) {
+      test(`Oracle error cursor matches normalized ${newlineName}, ${bom ? 'BOM' : 'no BOM'}, ${method} input`, async ({ page }) => {
+        await page.getByLabel('DB 종류').selectOption('plsql');
+        // Also put Unicode before the error on the same line to check UTF-16 columns.
+        for (const sql of ['select § from dual;', "select '한글😀', § from dual;"]) {
+          const text = `${bom}-- 한글😀${newline}${sql}`;
+          if (method === 'paste') await pasteSql(page, text);
+          else await page.getByLabel('SQL 파일 선택', { exact: true }).setInputFiles({ name: 'unicode.sql', mimeType: 'text/plain', buffer: Buffer.from(text) });
+          // File decoding consumes the UTF-8 BOM; clipboard input preserves it.
+          const normalized = `${method === 'paste' ? bom : ''}-- 한글😀\n${sql}`;
+          await expectSqlLines(page, normalized);
+          await validate(page).click();
+          await expect(page.getByText(/구문 분석 실패/)).toBeVisible();
+          await expectErrorCursor(page, 2, sql.indexOf('§') + 1, '§');
+          await expectSqlLines(page, normalized);
+        }
+      });
+    }
+  }
+}
 
 test('Oracle separates unsupported scripts from syntax errors and preserves stale output', async ({ page }) => {
   await page.getByLabel('DB 종류').selectOption('plsql');

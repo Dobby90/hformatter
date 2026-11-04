@@ -160,19 +160,24 @@ test('Oracle lexer/parser errors cannot be recovered into success or ignore trai
     assert.ok(result.error.offset >= 0 && result.error.offset <= text.length, JSON.stringify(result));
   }
 });
-test('Oracle translates code-point errors to original UTF-16 offsets including BOM and CRLF', async () => {
-  const lexical = '\uFEFF-- 한글😀\r\nselect § from dual;';
-  const lexerResult = await run(lexical, 'validate', 'plsql');
-  assert.equal(lexerResult.ok, false);
-  assert.equal(lexerResult.error.offset, lexical.indexOf('§'));
-  assert.equal(lexerResult.error.line, 2);
-  assert.equal(lexerResult.error.column, 8);
-  const syntactic = '\uFEFF-- 한글😀\r\nselect * from dual\r\nwhere id = ;';
-  const parserResult = await run(syntactic, 'validate', 'plsql');
-  assert.equal(parserResult.ok, false);
-  assert.equal(parserResult.error.offset, syntactic.indexOf('='));
-  assert.equal(parserResult.error.line, 3);
-  assert.equal(parserResult.error.column, 10);
+test('Oracle translates code-point errors to original UTF-16 offsets with LF/CRLF, BOM and Unicode', async () => {
+  for (const newline of ['\n', '\r\n']) {
+    for (const bom of ['', '\uFEFF']) {
+      for (const sql of ['select § from dual;', "select '한글😀', § from dual;"]) {
+        const lexical = `${bom}-- 한글😀${newline}${sql}`;
+        const lexerResult = await run(lexical, 'validate', 'plsql');
+        assert.equal(lexerResult.ok, false);
+        assert.deepEqual({ offset: lexerResult.error.offset, line: lexerResult.error.line, column: lexerResult.error.column },
+          { offset: lexical.indexOf('§'), line: 2, column: sql.indexOf('§') + 1 }, JSON.stringify(lexical));
+        assert.equal(lexical[lexerResult.error.offset], '§');
+      }
+      const syntactic = `${bom}-- 한글😀${newline}select * from dual${newline}where id = ;`;
+      const parserResult = await run(syntactic, 'validate', 'plsql');
+      assert.equal(parserResult.ok, false);
+      assert.deepEqual({ offset: parserResult.error.offset, line: parserResult.error.line, column: parserResult.error.column },
+        { offset: syntactic.indexOf('='), line: 3, column: 10 }, JSON.stringify(syntactic));
+    }
+  }
 });
 test('Oracle procedural bodies, SQL*Plus and implicit/explicit calls are unsupported, never normal', async () => {
   for (const text of ['begin null; end;', 'declare n number; begin n := 1; end;',
