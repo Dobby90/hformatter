@@ -41,16 +41,45 @@ export const xmlLanguage = [
       ranges = new Map(); folds.set(state.doc, ranges);
       const opened: { start: number; end: number; name: string }[] = [];
       const source = state.doc.toString();
-      const tokens = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?([^\s<>/]+)(?:[^<>"']|"[^"]*"|'[^']*')*>/g;
-      for (const match of source.matchAll(tokens)) {
-        if (!match[1]) continue;
-        const raw = match[0], start = match.index!;
-        if (raw.startsWith('</')) {
+      // Scan forward without backtracking, including unfinished tags.
+      // Overlapping regex repetitions can otherwise block the editor on a paste.
+      let position = 0;
+      while (position < source.length) {
+        const start = source.indexOf('<', position);
+        if (start < 0) break;
+        const terminator = source.startsWith('<!--', start) ? '-->'
+          : source.startsWith('<![CDATA[', start) ? ']]>'
+          : source.startsWith('<?', start) ? '?>' : null;
+        if (terminator) {
+          const end = source.indexOf(terminator, start + (terminator === '-->' ? 4 : terminator === ']]>' ? 9 : 2));
+          if (end < 0) break;
+          position = end + terminator.length;
+          continue;
+        }
+        let cursor = start + 1;
+        const closing = source[cursor] === '/';
+        if (closing) cursor++;
+        const nameStart = cursor;
+        while (cursor < source.length && !/[\s<>/'"=!?]/.test(source[cursor])) cursor++;
+        if (cursor === nameStart) { position = cursor; continue; }
+        const name = source.slice(nameStart, cursor);
+        let quote = '', end = -1;
+        for (; cursor < source.length; cursor++) {
+          const char = source[cursor];
+          if (quote) { if (char === quote) quote = ''; }
+          else if (char === '"' || char === "'") quote = char;
+          else if (char === '<') break;
+          else if (char === '>') { end = cursor + 1; break; }
+        }
+        // Resume at an unquoted '<', or stop at EOF for incomplete markup.
+        position = end < 0 ? cursor : end;
+        if (end < 0) continue;
+        if (closing) {
           const open = opened.pop();
-          if (!open || open.name !== match[1] || state.doc.lineAt(open.end).number === state.doc.lineAt(start).number) continue;
+          if (!open || open.name !== name || state.doc.lineAt(open.end).number === state.doc.lineAt(start).number) continue;
           const line = state.doc.lineAt(open.start).from;
           if (!ranges.has(line) || ranges.get(line)!.from > open.end) ranges.set(line, { from: open.end, to: start });
-        } else if (!raw.endsWith('/>')) opened.push({ start, end: start + raw.length, name: match[1] });
+        } else if (source[end - 2] !== '/') opened.push({ start, end, name });
       }
     }
     const range = ranges.get(lineStart);

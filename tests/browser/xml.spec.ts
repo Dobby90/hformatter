@@ -10,6 +10,15 @@ const file = (name: string, body: string | Uint8Array) => ({ name, mimeType: 'ap
 const open = (p: Page) => p.getByLabel('XML 파일 선택', { exact: true });
 const reset = (p: Page) => p.getByRole('button', { name: '초기화', exact: true });
 async function enter(p: Page) { await p.goto('./'); await p.getByRole('button', { name: 'XML', exact: true }).click(); await expect(input(p)).toBeVisible(); }
+// Copy uses CodeMirror's complete document, including text omitted by DOM virtualization.
+async function readInputDocument(p: Page) {
+  await input(p).press('ControlOrMeta+a');
+  return input(p).evaluate(element => {
+    const clipboardData = new DataTransfer();
+    element.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData }));
+    return clipboardData.getData('text/plain');
+  });
+}
 async function downloaded(p: Page) {
   const event = p.waitForEvent('download'); await save(p).click(); const result = await event;
   const stream = await result.createReadStream(), chunks: Buffer[] = [];
@@ -149,8 +158,10 @@ test('Worker construction, execution, response failures and real ten-second time
     await input(page).fill('<r><retry/></r>'); await format(page).click(); await expect(save(page)).toBeEnabled();
     await input(page).fill('<r/>');
   }
-  await input(page).fill('<a>'.repeat(5000) + '<b/>' + '</a>'.repeat(5000)); await format(page).click();
-  await expect(page.locator('.status-error')).toContainText('40 MiB'); await expect(input(page)).toContainText('<b/>');
+  const original = '<a>'.repeat(5000) + '<b/>' + '</a>'.repeat(5000);
+  await input(page).fill(original); await format(page).click();
+  await expect(page.locator('.status-error')).toContainText('40 MiB');
+  expect(await readInputDocument(page)).toBe(original);
   await input(page).fill('<recovered/>'); await format(page).click(); await expect(save(page)).toBeEnabled();
 });
 
