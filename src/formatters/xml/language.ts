@@ -21,15 +21,17 @@ const language = StreamLanguage.define<State>({
       const char = stream.peek();
       if (char === '"' || char === "'") { state.quote = stream.next()!; return 'string'; }
       if (stream.eat('=')) return 'punctuation';
-      if (stream.match(/[^\s=<>/'"]+/)) return 'propertyName';
+      if (stream.match(/^[^\s=<>/'"]+/)) return 'propertyName';
       stream.next(); return null;
     }
     if (stream.match('<!--')) { state.mode = 'comment'; return 'comment'; }
     if (stream.match('<![CDATA[')) { state.mode = 'cdata'; return 'string'; }
     if (stream.match('<?')) { state.mode = 'pi'; return 'comment'; }
-    if (stream.match(/<\/?[^\s<>/]+/)) { state.mode = 'tag'; return 'typeName'; }
-    if (stream.match(/&[^&;\s]*;/)) return 'escape';
-    stream.next(); return null;
+    if (stream.match(/^<\/?[^\s<>/]+/)) { state.mode = 'tag'; return 'typeName'; }
+    if (stream.match(/^&[^&;\s]*;/)) return 'escape';
+    // Consume ordinary text together; malformed delimiters must still advance.
+    if (!stream.eatWhile(/[^<&]/)) stream.next();
+    return null;
   },
 });
 const folds = new WeakMap<Text, Map<number, { from: number; to: number }>>();
