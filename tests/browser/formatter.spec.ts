@@ -70,9 +70,9 @@ test('copy denial selects result; planned formats unavailable; reload discards d
   await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('denied')) }, configurable: true }); });
   await page.getByRole('button', { name: '예제', exact: true }).click(); await format(page).click(); await expect(download(page)).toBeEnabled();
   await page.getByRole('button', { name: '복사', exact: true }).click(); await expect(page.getByText(/복사 권한이 없습니다/)).toBeVisible();
-  for (const format of ['XML', 'YAML']) {
-    await expect(page.getByRole('button', { name: `${format} 추후 구현 예정`, exact: true })).toBeDisabled();
-  }
+  await expect(page.getByRole('button', { name: 'XML', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'XML 추후 구현 예정', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'YAML 추후 구현 예정', exact: true })).toBeDisabled();
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0]);
   expect(requests).toEqual([]);
   await page.reload(); await expect(input(page)).toBeEmpty(); await expect(output(page)).toBeEmpty();
