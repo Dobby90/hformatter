@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { expectMarkdownSource, selectedMarkdownSource } from './markdown-fullscreen-source.ts';
 
 const input = (page: Page) => page.getByRole('textbox', { name: 'Markdown 입력', exact: true });
 const panel = (page: Page) => page.getByRole('region', { name: '미리보기 영역', exact: true });
@@ -56,7 +57,7 @@ test('only expanded preview offers fullscreen; button and Escape restore documen
   }
 
   await button(page, '원문 함께 보기').click();
-  await expect(input(page)).toHaveText(text);
+  await expectMarkdownSource(page, text);
   await expect(page.locator('.file-name')).toHaveText('fullscreen.md');
   await expect(page.getByRole('separator')).toHaveAttribute('aria-valuenow', '52');
   await expect(enter(page)).toHaveCount(0);
@@ -128,7 +129,7 @@ test('fullscreen copy and download use source; denied copy exits and selects sou
   await page.getByLabel('Markdown 파일 선택', { exact: true }).setInputFiles({
     name: 'source.md', mimeType: 'text/markdown', buffer: Buffer.from(text),
   });
-  await expect(input(page)).toHaveText(text);
+  await expectMarkdownSource(page, text);
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'clipboard', { value: {
       writeText: async (text: string) => { document.documentElement.dataset.copied = text; },
@@ -158,7 +159,7 @@ test('fullscreen copy and download use source; denied copy exits and selects sou
   await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
   await expect(input(page)).toBeVisible();
   await expect(input(page)).toBeFocused();
-  expect(await input(page).evaluate(element => element.ownerDocument.getSelection()?.toString())).toBe(text);
+  expect(await selectedMarkdownSource(page)).toBe(text);
   await expect(page.locator('.feedback .notice')).toContainText('복사 권한이 없습니다');
 });
 
@@ -198,7 +199,7 @@ for (const size of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }])
     await exit(page).click();
     await expect.poll(() => isFullscreen(page)).toBe(false);
     await button(page, '원문 함께 보기').click();
-    await expect(input(page)).toHaveText(text);
+    await expectMarkdownSource(page, text);
   });
 }
 

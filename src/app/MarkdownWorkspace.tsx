@@ -23,6 +23,8 @@ export default function MarkdownWorkspace() {
   const fullscreenButton = useRef<HTMLButtonElement>(null);
   const mounted = useRef(false);
   const fullscreenPending = useRef(false);
+  const fullscreenRequest = useRef(0);
+  const fullscreenSettled = useRef<Promise<void> | null>(null);
   const focusFrame = useRef(0);
   const [preview, setPreview] = useState({ text: '', version: 0 });
   const [failedVersion, setFailedVersion] = useState<number | null>(null);
@@ -55,12 +57,21 @@ export default function MarkdownWorkspace() {
       }
       owned = next;
     };
+    const onFullscreenKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && document.fullscreenElement === panel) {
+        event.preventDefault();
+        void toggleFullscreen();
+      }
+    };
     document.addEventListener('fullscreenchange', syncFullscreen);
+    document.addEventListener('keydown', onFullscreenKeyDown);
     return () => {
       mounted.current = false;
+      fullscreenRequest.current++;
       fileRequest.current++;
       cancelAnimationFrame(focusFrame.current);
       document.removeEventListener('fullscreenchange', syncFullscreen);
+      document.removeEventListener('keydown', onFullscreenKeyDown);
       if (document.fullscreenElement === panel) void document.exitFullscreen().catch(() => {});
     };
   }, []);
@@ -69,14 +80,20 @@ export default function MarkdownWorkspace() {
     const panel = previewPanel.current;
     if (!panel || fullscreenPending.current) return;
     fullscreenPending.current = true;
+    const request = ++fullscreenRequest.current;
+    let complete = () => {};
+    fullscreenSettled.current = new Promise<void>(resolve => { complete = resolve; });
     setNotice('');
-    const exiting = document.fullscreenElement === panel;
+    let exiting = document.fullscreenElement === panel;
     try {
       if (exiting) await document.exitFullscreen();
       else await panel.requestFullscreen();
-      if (!mounted.current) {
-        if (document.fullscreenElement === panel) await document.exitFullscreen();
-        return;
+      if (!mounted.current || request !== fullscreenRequest.current) {
+        if (document.fullscreenElement === panel) {
+          exiting = true;
+          await document.exitFullscreen();
+        }
+        if (!mounted.current) return;
       }
       setFullscreen(document.fullscreenElement === panel);
     } catch {
@@ -87,6 +104,8 @@ export default function MarkdownWorkspace() {
       }
     } finally {
       fullscreenPending.current = false;
+      fullscreenSettled.current = null;
+      complete();
     }
   }
   useEffect(() => {
@@ -139,6 +158,9 @@ export default function MarkdownWorkspace() {
       if (mounted.current && copyVersion === version.current) setNotice('원문을 복사했습니다.');
     } catch {
       if (!mounted.current || copyVersion !== version.current) return;
+      fullscreenRequest.current++;
+      await fullscreenSettled.current;
+      if (!mounted.current || copyVersion !== version.current) return;
       if (document.fullscreenElement === previewPanel.current) {
         try { await document.exitFullscreen(); }
         catch {
@@ -174,7 +196,7 @@ export default function MarkdownWorkspace() {
           <button onClick={() => { fileRequest.current++; source.current?.replace(MARKDOWN_SAMPLE); setFilename(''); setReading(false); }}>예제</button>
           <span className="button-divider" /><button onClick={reset}>초기화</button>
         </div>
-        <button className="preview-toggle" aria-pressed={previewOnly} onClick={() => setPreviewOnly(value => !value)}>{previewOnly ? '원문 함께 보기' : '미리보기 확대'}</button>
+        <button className="preview-toggle" aria-pressed={previewOnly} onClick={() => { fullscreenRequest.current++; setPreviewOnly(value => !value); }}>{previewOnly ? '원문 함께 보기' : '미리보기 확대'}</button>
       </div>
       <div className="tool-row actions"><div className="button-group">
         <button className="primary" onClick={refresh} disabled={!!limit || reading || empty}>미리보기 갱신</button>
@@ -209,7 +231,7 @@ export default function MarkdownWorkspace() {
       <section ref={previewPanel} className="pane output-pane" aria-label="미리보기 영역" onDragOver={event => event.preventDefault()} onDrop={drop}>
         <div className="pane-heading"><div><span className="pane-dot result-dot" /><h2>미리보기</h2><span className={`result-label ${stale ? 'stale' : ''}`}>{stale && !empty && !limit ? '갱신 중…' : '읽기 전용'}</span></div>
           <div className="pane-tools"><button disabled={!input || reading} onClick={() => void copySource()}>원문 복사</button><button disabled={!input || reading} onClick={() => { downloadFile(currentText.current, markdownDownloadName(filename), 'text/markdown;charset=utf-8'); setNotice('다운로드를 시작했습니다.'); }}>다운로드</button>
-            {previewOnly && <button ref={fullscreenButton} className="fullscreen-toggle" disabled={!fullscreen && !!fullscreenUnavailable}
+            {(previewOnly || fullscreen) && <button ref={fullscreenButton} className="fullscreen-toggle" disabled={!fullscreen && !!fullscreenUnavailable}
               aria-label={fullscreen ? '전체화면 종료' : '미리보기 전체화면'}
               title={fullscreen ? '전체화면 종료' : fullscreenUnavailable || '미리보기 전체화면'}
               aria-describedby={fullscreenUnavailable ? 'markdown-fullscreen-help' : undefined}

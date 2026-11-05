@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { expectMarkdownSource, selectedMarkdownSource } from './markdown-fullscreen-source.ts';
 
 const sourceText = '# 전체화면 경계 조건\n\n**원문 보존**';
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
@@ -107,11 +108,11 @@ test('denied copy with failed fullscreen exit keeps source hidden and offers a r
   await button(page, '원문 복사').click();
   await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
   await expect(input(page)).toBeVisible();
-  await expect(input(page)).toHaveText(sourceText);
   await expect(input(page)).toBeFocused();
-  expect(await input(page).evaluate(element => element.ownerDocument.getSelection()?.toString())).toBe(sourceText);
+  expect(await selectedMarkdownSource(page)).toBe(sourceText);
   await expect(page.locator('.feedback .notice')).toContainText('복사 권한이 없습니다');
   await expect(enter(page)).toHaveCount(0);
+  await expectMarkdownSource(page, sourceText);
 });
 
 test('unmount removes the fullscreen subscription without exiting fullscreen owned by another element', async ({ page }) => {
