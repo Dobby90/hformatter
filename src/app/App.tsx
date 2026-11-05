@@ -27,6 +27,6 @@ export function App() {
     <Suspense key={toolId} fallback={<main role="status">Markdown 화면을 불러오는 중…</main>}>
       {toolId === 'markdown' ? <MarkdownWorkspace /> : <FormatterWorkspace key={toolId} formatId={toolId} />}
     </Suspense>
-    <footer className="site-footer"><span>입력과 결과는 탭 전환·새로고침 시 사라집니다.</span><span className="footer-meta"><span aria-label={`버전 ${APP_VERSION}`}>{APP_VERSION}</span><span>Created by 조홍연</span></span></footer>
+    <footer className="site-footer"><span>입력과 결과는 탭 전환·새로고침 시 사라집니다.</span><span className="footer-meta"><span aria-label={`버전 ${APP_VERSION}`}>{APP_VERSION}</span></span></footer>
   </div>;
 }
