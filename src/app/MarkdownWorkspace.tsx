@@ -17,6 +17,15 @@ export default function MarkdownWorkspace() {
   const [dragging, setDragging] = useState(false);
   const [previewOnly, setPreviewOnly] = useState(false);
   const [split, setSplit] = useState(50);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenUnavailable, setFullscreenUnavailable] = useState('');
+  const previewPanel = useRef<HTMLElement>(null);
+  const fullscreenButton = useRef<HTMLButtonElement>(null);
+  const mounted = useRef(false);
+  const fullscreenPending = useRef(false);
+  const fullscreenRequest = useRef(0);
+  const fullscreenSettled = useRef<Promise<void> | null>(null);
+  const focusFrame = useRef(0);
   const [preview, setPreview] = useState({ text: '', version: 0 });
   const [failedVersion, setFailedVersion] = useState<number | null>(null);
   const source = useRef<EditorHandle>(null);
@@ -31,7 +40,74 @@ export default function MarkdownWorkspace() {
   const stale = preview.text !== input;
   const failed = !stale && failedVersion === preview.version;
 
-  useEffect(() => () => { fileRequest.current++; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    const panel = previewPanel.current!;
+    let owned = document.fullscreenElement === panel;
+    setFullscreenUnavailable(typeof panel.requestFullscreen !== 'function' || typeof document.exitFullscreen !== 'function'
+      ? '이 브라우저는 전체화면을 지원하지 않습니다.'
+      : !document.fullscreenEnabled ? '이 환경에서는 전체화면이 허용되지 않습니다.' : '');
+    const syncFullscreen = () => {
+      const next = document.fullscreenElement === panel;
+      setFullscreen(next);
+      if (owned && !next) {
+        focusFrame.current = requestAnimationFrame(() => {
+          if (mounted.current && fullscreenButton.current?.isConnected) fullscreenButton.current.focus();
+        });
+      }
+      owned = next;
+    };
+    const onFullscreenKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && document.fullscreenElement === panel) {
+        event.preventDefault();
+        void toggleFullscreen();
+      }
+    };
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    document.addEventListener('keydown', onFullscreenKeyDown);
+    return () => {
+      mounted.current = false;
+      fullscreenRequest.current++;
+      fileRequest.current++;
+      cancelAnimationFrame(focusFrame.current);
+      document.removeEventListener('fullscreenchange', syncFullscreen);
+      document.removeEventListener('keydown', onFullscreenKeyDown);
+      if (document.fullscreenElement === panel) void document.exitFullscreen().catch(() => {});
+    };
+  }, []);
+
+  async function toggleFullscreen() {
+    const panel = previewPanel.current;
+    if (!panel || fullscreenPending.current) return;
+    fullscreenPending.current = true;
+    const request = ++fullscreenRequest.current;
+    let complete = () => {};
+    fullscreenSettled.current = new Promise<void>(resolve => { complete = resolve; });
+    setNotice('');
+    let exiting = document.fullscreenElement === panel;
+    try {
+      if (exiting) await document.exitFullscreen();
+      else await panel.requestFullscreen();
+      if (!mounted.current || request !== fullscreenRequest.current) {
+        if (document.fullscreenElement === panel) {
+          exiting = true;
+          await document.exitFullscreen();
+        }
+        if (!mounted.current) return;
+      }
+      setFullscreen(document.fullscreenElement === panel);
+    } catch {
+      if (mounted.current) {
+        setFullscreen(document.fullscreenElement === panel);
+        setNotice(exiting ? '전체화면을 종료하지 못했습니다. 종료 버튼이나 Escape로 다시 시도해 주세요.'
+          : '전체화면을 시작하지 못했습니다. 브라우저 권한을 확인하고 다시 시도해 주세요.');
+      }
+    } finally {
+      fullscreenPending.current = false;
+      fullscreenSettled.current = null;
+      complete();
+    }
+  }
   useEffect(() => {
     if (limit) return;
     const inputVersion = version.current;
@@ -79,11 +155,22 @@ export default function MarkdownWorkspace() {
     const copyVersion = version.current;
     try {
       await navigator.clipboard.writeText(currentText.current);
-      if (copyVersion === version.current) setNotice('원문을 복사했습니다.');
+      if (mounted.current && copyVersion === version.current) setNotice('원문을 복사했습니다.');
     } catch {
-      if (copyVersion !== version.current) return;
+      if (!mounted.current || copyVersion !== version.current) return;
+      fullscreenRequest.current++;
+      await fullscreenSettled.current;
+      if (!mounted.current || copyVersion !== version.current) return;
+      if (document.fullscreenElement === previewPanel.current) {
+        try { await document.exitFullscreen(); }
+        catch {
+          if (mounted.current) setNotice('전체화면을 종료하지 못했습니다. 종료 버튼이나 Escape로 종료한 뒤 원문 복사를 다시 시도해 주세요.');
+          return;
+        }
+      }
+      if (!mounted.current || copyVersion !== version.current) return;
       setPreviewOnly(false);
-      requestAnimationFrame(() => source.current?.selectAll());
+      requestAnimationFrame(() => { if (mounted.current && copyVersion === version.current) source.current?.selectAll(); });
       setNotice('복사 권한이 없습니다. 선택된 원문을 Ctrl+C 또는 Cmd+C로 복사하세요. HTTPS 환경도 확인하세요.');
     }
   }
@@ -109,7 +196,7 @@ export default function MarkdownWorkspace() {
           <button onClick={() => { fileRequest.current++; source.current?.replace(MARKDOWN_SAMPLE); setFilename(''); setReading(false); }}>예제</button>
           <span className="button-divider" /><button onClick={reset}>초기화</button>
         </div>
-        <button className="preview-toggle" aria-pressed={previewOnly} onClick={() => setPreviewOnly(value => !value)}>{previewOnly ? '원문 함께 보기' : '미리보기 확대'}</button>
+        <button className="preview-toggle" aria-pressed={previewOnly} onClick={() => { fullscreenRequest.current++; setPreviewOnly(value => !value); }}>{previewOnly ? '원문 함께 보기' : '미리보기 확대'}</button>
       </div>
       <div className="tool-row actions"><div className="button-group">
         <button className="primary" onClick={refresh} disabled={!!limit || reading || empty}>미리보기 갱신</button>
@@ -141,10 +228,22 @@ export default function MarkdownWorkspace() {
         onPointerDown={event => event.currentTarget.setPointerCapture(event.pointerId)}
         onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) { const bounds = workspace.current!.getBoundingClientRect(); setSplit(Math.max(25, Math.min(75, (event.clientX - bounds.left) / bounds.width * 100))); } }}
         onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)}><span /></div>
-      <section className="pane output-pane" aria-label="미리보기 영역" onDragOver={event => event.preventDefault()} onDrop={drop}>
+      <section ref={previewPanel} className="pane output-pane" aria-label="미리보기 영역" onDragOver={event => event.preventDefault()} onDrop={drop}>
         <div className="pane-heading"><div><span className="pane-dot result-dot" /><h2>미리보기</h2><span className={`result-label ${stale ? 'stale' : ''}`}>{stale && !empty && !limit ? '갱신 중…' : '읽기 전용'}</span></div>
-          <div className="pane-tools"><button disabled={!input || reading} onClick={() => void copySource()}>원문 복사</button><button disabled={!input || reading} onClick={() => { downloadFile(currentText.current, markdownDownloadName(filename), 'text/markdown;charset=utf-8'); setNotice('다운로드를 시작했습니다.'); }}>다운로드</button></div>
+          <div className="pane-tools"><button disabled={!input || reading} onClick={() => void copySource()}>원문 복사</button><button disabled={!input || reading} onClick={() => { downloadFile(currentText.current, markdownDownloadName(filename), 'text/markdown;charset=utf-8'); setNotice('다운로드를 시작했습니다.'); }}>다운로드</button>
+            {(previewOnly || fullscreen) && <button ref={fullscreenButton} className="fullscreen-toggle" disabled={!fullscreen && !!fullscreenUnavailable}
+              aria-label={fullscreen ? '전체화면 종료' : '미리보기 전체화면'}
+              title={fullscreen ? '전체화면 종료' : fullscreenUnavailable || '미리보기 전체화면'}
+              aria-describedby={fullscreenUnavailable ? 'markdown-fullscreen-help' : undefined}
+              onClick={() => void toggleFullscreen()}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" focusable="false">
+                <path d={fullscreen ? 'M3 9h6V3m6 0v6h6M3 15h6v6m6 0v-6h6' : 'M9 3H3v6m12-6h6v6M3 15v6h6m6 0h6v-6'} />
+              </svg>
+            </button>}
+          </div>
         </div>
+        {previewOnly && fullscreenUnavailable && <div id="markdown-fullscreen-help" className="notice fullscreen-notice">{fullscreenUnavailable}</div>}
+        {fullscreen && notice && <div className="notice fullscreen-notice" role="status">{notice}</div>}
         <div className="editor-body">
           <article className="markdown-preview" aria-label="Markdown 미리보기" tabIndex={0} aria-busy={stale && !limit && !empty}>
             {limit ? <p className="preview-error">{limit}</p> : empty ? <div className="editor-placeholder"><span>↳</span><p>문서가 여기에 표시됩니다</p><small>입력하면 미리보기가 자동으로 갱신됩니다</small></div>
